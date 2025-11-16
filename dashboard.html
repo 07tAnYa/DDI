@@ -1,0 +1,1130 @@
+<!--
+safRx.html
+Single-file SafeRx dashboard (HTML + CSS + JS)
+
+README (top-level instructions)
+--------------------------------
+- This single HTML file implements the SafeRx drug–drug interaction dashboard with:
+  - Left panel: multi-select autocomplete to choose medicines and options
+  - Main panel: summary, charts (Chart.js), network graph (vis-network), details table
+  - Right panel: glossary, disclaimers
+  - PDF export via jsPDF + html2canvas, CSV export, save/re-run recent checks (localStorage)
+- To replace the mock API with a real endpoint:
+  1. Find the function `fetchInteractions(drugIds)` in the JS (search for `// API SWITCH`).
+  2. Replace the mock branch with a call to your backend, e.g.:
+       return fetch('/api/interaction', {
+         method: 'POST',
+         headers: {'Content-Type':'application/json'},
+         body: JSON.stringify({drugIds})
+       }).then(r => r.json());
+  3. Keep the returned JSON schema identical to the provided mock schema (field names must match):
+     query, summary, interactions, statistics
+- External libraries are loaded via CDN; no build step required.
+- Tested to run directly in modern Chrome/Firefox (no server required).
+-->
+
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>SafeRx — Drug Interaction Checker</title>
+
+  <!-- Tailwind via CDN for utility classes -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- Inter font -->
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700;800&display=swap" rel="stylesheet">
+
+  <!-- Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+
+  <!-- vis-network for network graph -->
+  <script src="https://cdn.jsdelivr.net/npm/vis-network@9.1.0/dist/vis-network.min.js"></script>
+  <link href="https://cdn.jsdelivr.net/npm/vis-network@9.1.0/dist/dist/vis-network.min.css" rel="stylesheet" />
+
+  <!-- Fuse.js for fuzzy search -->
+  <script src="https://cdn.jsdelivr.net/npm/fuse.js@6.6.2/dist/fuse.min.js"></script>
+
+  <!-- jsPDF + html2canvas for PDF export -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+
+  <!-- Icons (Heroicons) -->
+  <script src="https://unpkg.com/feather-icons"></script>
+
+  <style>
+    :root{
+      --accent:#E07A3A; /* muted orange */
+      --slate-900:#0f1724;
+      --slate-800:#1F2937;
+      --slate-700:#374151;
+      --bg:#F8FAFC;
+      --card:#ffffff;
+      --muted:#6B7280;
+      --glass: rgba(255,255,255,0.6);
+      --success:#10B981;
+      --danger:#EF4444;
+      --warning:#F59E0B;
+      --shadow: 0 6px 18px rgba(15,23,42,0.08);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+      background: linear-gradient(135deg, #0b3e45, #14727d);
+    }
+
+    /* Custom minimal bubble-style logo treatment */
+    .brand-logo{
+      display:inline-flex;align-items:center;gap:.6rem;font-weight:700;color:var(--slate-900);
+    }
+    .brand-mark{
+      width:40px;height:40px;border-radius:9999px;background:linear-gradient(180deg,rgba(224,122,58,0.14),rgba(224,122,58,0.06));
+      display:inline-flex;align-items:center;justify-content:center;box-shadow: 0 6px 18px rgba(224,122,58,0.08);
+      font-weight:800;color:var(--accent);font-size:1.05rem;border:1px solid rgba(224,122,58,0.08);
+    }
+
+    /* layout */
+    .grid-layout{
+      display:grid;
+      grid-template-columns: 320px 1fr 320px;
+      gap:20px;
+      padding:20px;
+    }
+    @media (max-width: 1100px){
+      .grid-layout{ grid-template-columns: 1fr; padding:12px; }
+      .left, .right { order: 2; }
+      .main { order: 1; }
+    }
+
+    /* card */
+    .card{
+      background:var(--card);
+      border-radius:16px;
+      padding:18px;
+      box-shadow:var(--shadow);
+      border:1px solid rgba(17,24,39,0.03);
+    }
+
+    .badge-high{ background: linear-gradient(90deg,#ff7b6b,#E07A3A); color:white; padding:.25rem .6rem;border-radius:999px;font-weight:600; font-size:.85rem;}
+    .badge-med{ background:#F59E0B; color:white; padding:.25rem .6rem;border-radius:999px;font-weight:600; font-size:.85rem;}
+    .badge-low{ background:#10B981;color:white;padding:.25rem .6rem;border-radius:999px;font-weight:600; font-size:.85rem;}
+
+    /* table */
+    table { width:100%; border-collapse:collapse; font-size:0.95rem; }
+    th, td { padding:10px 12px; text-align:left; border-bottom:1px solid rgba(15,23,42,0.04);}
+    th { font-weight:600; color:var(--slate-800); font-size:0.9rem; }
+    tr.expandable { cursor: pointer; }
+    .expanded-row { background: linear-gradient(90deg, rgba(224,122,58,0.02), rgba(224,122,58,0.01)); }
+
+    /* loading skeleton */
+    .skeleton { background: linear-gradient(90deg, #f0f0f0, #e8e8e8); border-radius:6px; min-height:14px; }
+
+    /* network container */
+    #network { height:320px; border-radius:12px; background:linear-gradient(180deg, rgba(17,24,39,0.01), rgba(17,24,39,0.02)); border:1px dashed rgba(15,23,42,0.03); }
+
+    /* small utilities */
+    .muted { color:var(--muted); font-size:0.92rem; }
+    .clickable { cursor:pointer; }
+    .pill { padding:.35rem .6rem; background:rgba(15,23,42,0.03); border-radius:999px; font-weight:600; font-size:0.85rem; }
+
+    /* tooltip */
+    .tooltip {
+      position:relative; display:inline-block;
+    }
+    .tooltip .tooltiptext{
+      visibility:hidden; width:220px; background:var(--slate-900); color:white; text-align:left; padding:8px 10px; border-radius:8px; position:absolute; z-index:100; bottom:125%; left:50%; transform:translateX(-50%); opacity:0; transition:opacity .18s ease;
+    }
+    .tooltip:hover .tooltiptext { visibility:visible; opacity:1; }
+
+    /* accessibility focus styles */
+    .focus-ring:focus { outline:3px solid rgba(224,122,58,0.18); outline-offset:2px; border-radius:8px; }
+
+    /* compact responsive tweaks */
+    @media (max-width: 640px){
+      #network { height:220px; }
+    }
+  </style>
+</head>
+<body class="bg-[var(--bg)] text-[14px] antialiased">
+
+  <!-- Header / Navbar -->
+  <header class="w-full py-4 px-6 flex items-center justify-between border-b border-transparent">
+    <div class="flex items-center gap-4">
+      <div class="brand-logo" aria-hidden="true">
+        <div class="brand-mark" aria-hidden="true">SR</div>
+        <div>
+          <div style="line-height:1;">
+            <div style="font-size:1.05rem">SafeRx</div>
+            <div class="muted" style="font-size:0.78rem">Drug Interaction Checker</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+<button id="sidebarToggle" class="fixed top-4 right-4 z-50 p-3 rounded-full bg-[var(--accent)] text-white shadow-lg">
+☰
+</button>
+
+
+<div id="sidebar" class="fixed top-0 right-0 w-30 h-full bg-white shadow-xl transform translate-x-full transition-transform duration-300 z-10 p-5">
+<h2 class="text-xl font-semibold mb-4">Menu</h2>
+<ul class="space-y-3">
+<li><a href="about.html" class="text-[var(--accent)] font-medium">About</a></li>
+<li><a href="member.html" class="text-[var(--accent)] font-medium">Members</a></li>
+<li><button id="logoutBtn" class="text-red-600 font-medium">Logout</button></li>
+</ul>
+</div>    
+
+    <div class="flex items-center gap-4">
+      <button id="themeToggle" class="p-2 rounded-md focus-ring" aria-pressed="false" title="Toggle theme">
+        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2"></path></svg>
+      </button>
+      <div class="w-10 h-10 rounded-full bg-[var(--card)] flex items-center justify-center card" title="Profile placeholder" aria-hidden="true">
+        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="none" stroke="#374151" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
+      </div>
+    </div>
+  </header>
+
+  <!-- Grid Layout: Left (controls) | Main (results) | Right (info) -->
+  <main class="grid-layout max-w-[1400px] mx-auto mt-6">
+
+    <!-- LEFT: Controls -->
+    <aside class="left card" aria-labelledby="controlsHeading">
+      <h2 id="controlsHeading" class="text-lg font-semibold">Check Interactions</h2>
+      <p class="muted mt-1 mb-4">Add two or more medicines and click <span class="font-semibold">Check Interaction</span>.</p>
+
+      <!-- Autocomplete Multi-select -->
+      <label class="block text-sm font-medium mb-2">Medicines (type to search)</label>
+      <div id="multiSelect" class="mb-3" aria-haspopup="listbox">
+        <div id="chips" class="flex flex-wrap gap-2 mb-2" aria-live="polite"></div>
+        <input id="drugInput" aria-label="Add medicine" class="w-full p-3 rounded-lg border border-gray-200 focus-ring" placeholder="Type medicine name, e.g., Paroxetine" />
+        <div id="suggestions" class="mt-2 bg-white shadow-sm rounded-md max-h-44 overflow-auto hidden" role="listbox" aria-label="Suggestions"></div>
+      </div>
+
+      <!-- Manual add dosage area -->
+      <div class="mb-3">
+        <label class="text-sm font-medium mb-1 block">Manual entry (optional)</label>
+        <div class="flex gap-2">
+          <input id="manualName" placeholder="Drug name" class="flex-1 p-2 rounded-md border border-gray-200 focus-ring" />
+          <input id="manualDose" placeholder="Dosage (e.g., 20 mg)" class="w-28 p-2 rounded-md border border-gray-200 focus-ring" />
+          <button id="manualAdd" class="px-3 rounded-md bg-[var(--accent)] text-white font-semibold">Add</button>
+        </div>
+      </div>
+
+      <!-- Options -->
+      <div class="mb-3">
+        <label class="text-sm font-medium mb-2 block">Options</label>
+        <div class="flex flex-col gap-2">
+          <label class="flex items-center gap-2"><input id="optOTC" type="checkbox" class="focus-ring"/> Include OTC drugs</label>
+          <label class="flex items-center gap-2"><input id="optSupp" type="checkbox" class="focus-ring"/> Include supplements</label>
+          <label class="flex items-center gap-2"><input id="optShowAll" type="checkbox" class="focus-ring" checked/> Show all severities</label>
+        </div>
+      </div>
+
+      <!-- Severity & Evidence filter -->
+      <div class="mb-4">
+        <label class="text-sm font-medium mb-2 block">Filters</label>
+        <div class="flex gap-2">
+          <select id="severityFilter" class="p-2 rounded-md border border-gray-200 focus-ring">
+            <option value="all">All severities</option>
+            <option value="High">High</option>
+            <option value="Moderate">Moderate</option>
+            <option value="Low">Low</option>
+          </select>
+          <select id="evidenceFilter" class="p-2 rounded-md border border-gray-200 focus-ring">
+            <option value="all">All evidence</option>
+            <option value="High">High</option>
+            <option value="Medium">Medium</option>
+            <option value="Low">Low</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Presets -->
+      <div class="mb-4">
+        <label class="text-sm font-medium mb-2 block">Quick presets</label>
+        <div class="flex flex-wrap gap-2">
+          <button class="pill" data-preset='["paroxetine","tramadol"]'>Paroxetine + Tramadol</button>
+          <button class="pill" data-preset='["ibuprofen","aspirin"]'>Ibuprofen + Aspirin</button>
+          <button class="pill" data-preset='["warfarin","amoxicillin"]'>Warfarin + Amoxicillin</button>
+        </div>
+      </div>
+
+      <!-- CTA -->
+      <div class="flex gap-3 items-center">
+        <button id="checkBtn" class="w-full py-3 rounded-lg bg-[var(--accent)] text-white font-semibold shadow-sm focus-ring" aria-live="polite">
+          <svg class="inline-block mr-2 -mt-1" xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12v3a2 2 0 0 0 2 2h12"></path><path d="M20 8V5a2 2 0 0 0-2-2H6"></path></svg>
+          Check Interaction
+        </button>
+      </div>
+
+      <div class="mt-3 text-xs muted">Saved checks:
+        <div id="savedChecks" class="mt-2 flex flex-col gap-2"></div>
+      </div>
+    </aside>
+
+    <!-- MAIN: Results -->
+    <section class="main card" aria-labelledby="resultsHeading">
+      <div class="flex items-start justify-between gap-4">
+        <div>
+          <h2 id="resultsHeading" class="text-lg font-semibold">Interaction Report</h2>
+          <p id="querySummary" class="muted mt-1">No check run yet — add medicines and click <span class="font-semibold">Check Interaction</span>.</p>
+        </div>
+
+        <div class="flex items-center gap-3">
+          <button id="exportCSV" class="px-3 py-2 border rounded-md focus-ring" title="Export results table as CSV">Export CSV</button>
+          <button id="exportPDF" class="px-3 py-2 bg-slate-900 text-white rounded-md focus-ring">Export PDF</button>
+        </div>
+      </div>
+
+      <!-- Summary card -->
+      <div id="summaryCard" class="card mt-4">
+        <div class="flex items-center justify-between gap-4">
+          <div class="flex items-center gap-4">
+            <div id="riskBadge" class="p-4 rounded-lg" style="min-width:120px;display:flex;flex-direction:column;align-items:flex-start;justify-content:center;">
+              <div id="riskLevelText" style="font-weight:700;font-size:1.05rem;">—</div>
+              <div class="muted" id="riskScoreText">—</div>
+            </div>
+
+            <div>
+              <div id="summaryText" class="text-sm muted max-w-[740px]">No data.</div>
+              <div id="quickActions" class="mt-2 flex gap-2"></div>
+            </div>
+          </div>
+
+          <div class="text-right muted">
+            <div class="text-xs">Generated:</div>
+            <div id="generatedAt" class="font-medium mt-1">—</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Charts & Graph -->
+      <div class="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div class="card md:col-span-1">
+          <div class="flex items-center justify-between mb-3">
+            <div class="font-semibold">Severity distribution</div>
+            <div class="muted text-sm">Pie</div>
+          </div>
+          <canvas id="pieChart" aria-label="Severity distribution chart" role="img"></canvas>
+        </div>
+
+        <div class="card md:col-span-1">
+          <div class="flex items-center justify-between mb-3">
+            <div class="font-semibold">Counts by severity</div>
+            <div class="muted text-sm">Bar</div>
+          </div>
+          <canvas id="barChart" aria-label="Severity counts chart" role="img"></canvas>
+        </div>
+
+        <div class="card md:col-span-1">
+          <div class="flex items-center justify-between mb-3">
+            <div class="font-semibold">Risk over time</div>
+            <div class="muted text-sm">Timeline</div>
+          </div>
+          <canvas id="lineChart" aria-label="Risk timeline chart" role="img"></canvas>
+        </div>
+      </div>
+
+      <!-- Network graph -->
+      <div class="mt-4 card">
+        <div class="flex items-center justify-between mb-3">
+          <div class="font-semibold">Interaction Network</div>
+          <div class="muted text-sm">Nodes = drugs · Edges = interactions</div>
+        </div>
+        <div id="network" tabindex="0" aria-label="Interaction network graph"></div>
+      </div>
+
+      <!-- Detailed table -->
+      <div class="mt-4 card">
+        <div class="flex items-center justify-between mb-3">
+          <div class="font-semibold">Detailed interactions</div>
+          <div class="muted text-sm">Expand rows for full explanation</div>
+        </div>
+
+        <div id="tableContainer" class="overflow-auto">
+          <table id="resultsTable" aria-live="polite">
+            <thead>
+              <tr>
+                <th>Drugs</th>
+                <th>Severity</th>
+                <th>Evidence</th>
+                <th>Recommendation</th>
+                <th>References</th>
+              </tr>
+            </thead>
+            <tbody id="resultsBody">
+              <tr><td colspan="5" class="muted p-6">No data yet. Run a check to populate results.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- RIGHT: Info and references -->
+    <aside class="right card" aria-labelledby="infoHeading">
+      <h3 id="infoHeading" class="text-lg font-semibold">Info & References</h3>
+      <p class="muted mt-2">For educational purposes only. Not a substitute for clinical judgement.</p>
+
+      <div class="mt-4">
+        <h4 class="font-semibold">Quick facts</h4>
+        <ul class="mt-2 text-sm muted list-disc pl-4">
+          <li>High severity: avoid combination or consult specialist.</li>
+          <li>Moderate: monitor, dose adjustment may be required.</li>
+          <li>Low: typically manageable with monitoring.</li>
+        </ul>
+      </div>
+
+      <div class="mt-4">
+        <h4 class="font-semibold">Glossary</h4>
+        <dl class="mt-2 text-sm muted">
+          <dt class="font-medium">CYP450</dt>
+          <dd class="mb-2">Liver enzymes that metabolize many drugs; interactions often involve CYP induction/inhibition.</dd>
+          <dt class="font-medium">QT prolongation</dt>
+          <dd class="mb-2">A heart rhythm effect that can be dangerous when drugs combine.</dd>
+          <dt class="font-medium">Serotonin syndrome</dt>
+          <dd class="mb-2">Life-threatening agitation, hyperthermia, autonomic instability — occurs with serotonergic drugs.</dd>
+        </dl>
+      </div>
+
+      <div class="mt-4">
+        <h4 class="font-semibold">Authoritative links</h4>
+        <ul class="mt-2 text-sm">
+          <li class="mt-2"><a href="https://www.fda.gov" target="_blank" rel="noopener" class="text-[var(--accent)]">FDA – Drug Interactions</a></li>
+          <li class="mt-2"><a href="https://www.ncbi.nlm.nih.gov" target="_blank" rel="noopener" class="text-[var(--accent)]">PubMed / NCBI</a></li>
+        </ul>
+      </div>
+
+      <div class="mt-6">
+        <h4 class="font-semibold">Settings</h4>
+        <div class="mt-2 text-sm">
+          <label class="flex items-center gap-2"><input id="saveChecks" type="checkbox" checked /> Save checks locally</label>
+        </div>
+      </div>
+    </aside>
+  </main>
+
+  <!-- Hidden container for PDF rendering -->
+  <div id="pdfCapture" style="position:fixed;left:-9999px;top:-9999px;width:1024px;padding:20px;background:white;z-index:9999;"></div>
+
+  <script>
+  /*************************************************************************
+   * SafeRx dashboard JavaScript
+   * - Uses Chart.js, vis-network, jsPDF + html2canvas, Fuse.js
+   * - Key function to replace: fetchInteractions(drugIds)
+   *************************************************************************/
+
+  // -----------------------
+  // Mock dataset: drug catalog for autocomplete (simple sample)
+  // In production, replace with real drug list / API
+
+  // -----------------------
+
+const sidebar = document.getElementById('sidebar');
+const toggle = document.getElementById('sidebarToggle');
+
+
+toggle.addEventListener('click', () => {
+sidebar.classList.toggle('-translate-x-full');
+});
+
+
+// Logout (placeholder)
+document.getElementById('logoutBtn').addEventListener('click', () => {
+alert('Logged out! (Add real logic)');
+});
+
+
+  const DRUG_CATALOG = [
+    {id:'paroxetine', name:'Paroxetine', commonName:'Paroxetine'},
+    {id:'tramadol', name:'Tramadol', commonName:'Tramadol'},
+    {id:'ibuprofen', name:'Ibuprofen', commonName:'Ibuprofen'},
+    {id:'aspirin', name:'Aspirin', commonName:'Aspirin'},
+    {id:'warfarin', name:'Warfarin', commonName:'Warfarin'},
+    {id:'amoxicillin', name:'Amoxicillin', commonName:'Amoxicillin'},
+    {id:'sertraline', name:'Sertraline', commonName:'Sertraline'},
+    {id:'ciprofloxacin', name:'Ciprofloxacin', commonName:'Ciprofloxacin'},
+    {id:'metformin', name:'Metformin', commonName:'Metformin'},
+    {id:'simvastatin', name:'Simvastatin', commonName:'Simvastatin'}
+  ];
+
+  // Fuse setup for fuzzy searching
+  const fuse = new Fuse(DRUG_CATALOG, { keys: ['name','commonName'], threshold: 0.35 });
+
+  // DOM refs
+  const drugInput = document.getElementById('drugInput');
+  const suggestionsEl = document.getElementById('suggestions');
+  const chipsEl = document.getElementById('chips');
+  const manualAdd = document.getElementById('manualAdd');
+  const manualName = document.getElementById('manualName');
+  const manualDose = document.getElementById('manualDose');
+  const checkBtn = document.getElementById('checkBtn');
+  const resultsBody = document.getElementById('resultsBody');
+  const querySummary = document.getElementById('querySummary');
+  const summaryText = document.getElementById('summaryText');
+  const riskLevelText = document.getElementById('riskLevelText');
+  const riskScoreText = document.getElementById('riskScoreText');
+  const generatedAt = document.getElementById('generatedAt');
+  const quickActions = document.getElementById('quickActions');
+  const savedChecksEl = document.getElementById('savedChecks');
+  const exportPDFBtn = document.getElementById('exportPDF');
+  const exportCSVBtn = document.getElementById('exportCSV');
+  const savedCheckbox = document.getElementById('saveChecks');
+
+  // Chart instances placeholders
+  let pieChart, barChart, lineChart;
+
+  // Network variables
+  let network, networkData;
+
+  // State: selected drugs
+  let selectedDrugs = []; // each {id,name,dosage?}
+
+  // LocalStorage keys
+  const LS_KEY = 'safRx_recent_checks_v1';
+
+  // -----------------------
+  // Accessibility: keyboard multi-select behavior & suggestions
+  // -----------------------
+  drugInput.addEventListener('input', (e) => {
+    const q = (e.target.value || '').trim();
+    if (!q) { suggestionsEl.classList.add('hidden'); return; }
+    const results = fuse.search(q, {limit: 8}).map(r => r.item);
+    renderSuggestions(results, q);
+  });
+
+  drugInput.addEventListener('keydown', (e) => {
+    const visible = !suggestionsEl.classList.contains('hidden');
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const first = suggestionsEl.querySelector('[data-id]');
+      if (first) addDrugById(first.dataset.id);
+      else if (drugInput.value.trim()) addManualDrug(drugInput.value.trim(), '');
+    } else if (e.key === 'ArrowDown' && visible) {
+      const first = suggestionsEl.querySelector('[data-id]');
+      if (first) first.focus();
+    }
+  });
+
+  function renderSuggestions(list, query) {
+    suggestionsEl.innerHTML = '';
+    if (!list.length) {
+      suggestionsEl.classList.add('hidden'); return;
+    }
+    list.forEach(item => {
+      const div = document.createElement('div');
+      div.tabIndex = 0;
+      div.className = 'p-2 hover:bg-gray-50 focus:bg-gray-50 cursor-pointer';
+      div.dataset.id = item.id;
+      div.innerHTML = `<strong>${escapeHtml(item.name)}</strong> <span class="muted text-xs"> — ${escapeHtml(item.commonName || '')}</span>`;
+      div.addEventListener('click', () => addDrugById(item.id));
+      div.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Enter') addDrugById(item.id);
+        if (ev.key === 'ArrowDown') { if (div.nextSibling) div.nextSibling.focus(); }
+        if (ev.key === 'ArrowUp') { if (div.previousSibling) div.previousSibling.focus(); else drugInput.focus(); }
+      });
+      suggestionsEl.appendChild(div);
+    });
+    suggestionsEl.classList.remove('hidden');
+  }
+
+  // Add drug by catalog id
+  function addDrugById(id){
+    const item = DRUG_CATALOG.find(d => d.id === id);
+    if (!item) return;
+    addDrug({id: item.id, name: item.name, dosage: ''});
+    drugInput.value = '';
+    suggestionsEl.classList.add('hidden');
+    drugInput.focus();
+  }
+
+  // Manual add (from manual add fields)
+  manualAdd.addEventListener('click', () => {
+    const name = manualName.value.trim();
+    const dose = manualDose.value.trim();
+    if (!name) return;
+    addManualDrug(name, dose);
+    manualName.value = ''; manualDose.value = '';
+  });
+
+  function addManualDrug(name, dose){
+    // create a synthetic id
+    const id = name.toLowerCase().replace(/\s+/g,'_') + '_' + Math.floor(Math.random()*1000);
+    addDrug({id, name, dosage: dose});
+  }
+
+  // Generic add drug (updates UI)
+  function addDrug(drug){
+    if (selectedDrugs.find(d => d.id === drug.id)) {
+      flashChip(drug.id); return;
+    }
+    selectedDrugs.push(drug);
+    renderChips();
+  }
+
+  function flashChip(id){
+    const chip = document.querySelector(`[data-chip="${id}"]`);
+    if (!chip) return;
+    chip.animate([{ transform: 'scale(1)' }, { transform: 'scale(1.03)' }, { transform: 'scale(1)'}], {duration:300});
+  }
+
+  function renderChips(){
+    chipsEl.innerHTML = '';
+    selectedDrugs.forEach(d => {
+      const c = document.createElement('div');
+      c.className = 'p-2 rounded-md bg-white border flex items-center gap-2';
+      c.dataset.chip = d.id;
+      c.innerHTML = `<div class="font-medium">${escapeHtml(d.name)}</div>
+        <div class="muted text-xs">${escapeHtml(d.dosage || '')}</div>
+        <button aria-label="Remove ${escapeHtml(d.name)}" class="ml-2 text-sm" data-remove="${d.id}">&times;</button>`;
+      chipsEl.appendChild(c);
+
+      c.querySelector('[data-remove]').addEventListener('click', () => {
+        selectedDrugs = selectedDrugs.filter(x => x.id !== d.id);
+        renderChips();
+      });
+    });
+    updateQuerySummary();
+  }
+
+  function updateQuerySummary(){
+    if (!selectedDrugs.length) {
+      querySummary.textContent = 'No check run yet — add medicines and click Check Interaction.';
+      return;
+    }
+    querySummary.textContent = selectedDrugs.map(d => d.name + (d.dosage ? ' ('+d.dosage+')' : '')).join(', ');
+  }
+
+  // Preset buttons
+  document.querySelectorAll('[data-preset]').forEach(b => {
+    b.addEventListener('click', () => {
+      const arr = JSON.parse(b.dataset.preset);
+      // map to catalog if possible
+      selectedDrugs = arr.map(nameOrId => {
+        const found = DRUG_CATALOG.find(d => d.id === nameOrId || d.name.toLowerCase() === nameOrId.toLowerCase());
+        return found ? {id:found.id, name:found.name, dosage:''} : {id:nameOrId, name:nameOrId, dosage:''};
+      });
+      renderChips();
+    });
+  });
+
+  // -----------------------
+  // API SWITCH: fetchInteractions(drugIds)
+  // - This function simulates network delay and returns the provided mock JSON.
+  // - To use a real API, replace the internal mock branch with a fetch() call.
+  // -----------------------
+  async function fetchInteractions(drugIds){
+    // If you want to call a real endpoint, replace the block below with:
+    // return fetch('/api/interaction', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({drugIds}) }).then(r=>r.json());
+
+    // Simulate network attempt to a configured REMOTE_API (optional)
+    const REMOTE_API = null; // set to a URL to attempt remote fetch
+    if (REMOTE_API) {
+      try {
+        const res = await fetch(REMOTE_API, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({drugIds})});
+        if (res.ok) return await res.json();
+        // if non-OK, fall through to mock
+      } catch (e) {
+        console.warn('Remote API failed, falling back to mock:', e);
+      }
+    }
+
+    // MOCK: return the exact JSON schema requested in the prompt
+    const now = new Date().toISOString();
+    // Basic logic: include pair interactions for some known combos; otherwise create Low interactions
+    const interactions = [];
+    const pushed = {}; // avoid duplicates
+
+    function pushInteraction(id, drugs, severity, severity_score, mechanism, evidence, recommendation, references){
+      if (pushed[id]) return;
+      pushed[id] = true;
+      const obj = {id, drugs, severity, severity_score, mechanism, evidence, recommendation};
+      if (references) obj.references = references;
+      interactions.push(obj);
+    }
+
+    // Hard-coded sample interactions (to match the prompt)
+    if (drugIds.includes('paroxetine') && drugIds.includes('tramadol')) {
+      pushInteraction('i1', ['paroxetine','tramadol'], 'High', 9,
+        'Both drugs increase serotonin levels and may induce serotonin syndrome. Tramadol is a serotonin reuptake inhibitor and paroxetine is an SSRI.',
+        'High',
+        'Avoid combination. Consider alternative analgesic or antidepressant. Monitor for signs of serotonin syndrome.',
+        [{title:'Serotonin syndrome review', url:'https://example.org/article1', doi:'10.1000/xyz'}]
+      );
+    }
+    if (drugIds.includes('ibuprofen') && drugIds.includes('aspirin')) {
+      pushInteraction('i2', ['ibuprofen','aspirin'], 'Moderate', 5,
+        'Increased bleeding risk due to additive antiplatelet effects.',
+        'Medium',
+        'Use with caution; monitor bleeding and consider drug holiday before surgery.'
+      );
+    }
+
+    // If no known combos, create mild interactions between each pair
+    for (let i=0;i<drugIds.length;i++){
+      for (let j=i+1;j<drugIds.length;j++){
+        const a = drugIds[i], b = drugIds[j];
+        const id = 'm_'+a+'_'+b;
+        if (!pushed[id]) {
+          const sev = Math.random() > 0.85 ? 'High' : (Math.random()>0.5 ? 'Moderate' : 'Low');
+          const score = sev === 'High' ? 8 + Math.random()*2 : (sev === 'Moderate' ? 4 + Math.random()*2 : 1+Math.random()*2);
+          pushInteraction(id, [a,b], sev, Math.round(score), 'Possible pharmacodynamic or pharmacokinetic interaction. Review mechanism with specialist.', 'Low', 'Review and monitor as needed.');
+        }
+      }
+    }
+
+    const by_severity = {High:0, Moderate:0, Low:0};
+    interactions.forEach(it => {
+      by_severity[it.severity] = (by_severity[it.severity] || 0) + 1;
+    });
+
+    const mockResponse = {
+      query: {
+        drugs: selectedDrugs.map(d => ({id:d.id, name:d.name, dosage:d.dosage || ''})),
+        timestamp: now
+      },
+      summary: {
+        risk_level: (by_severity.High>0) ? 'High' : (by_severity.Moderate>0 ? 'Moderate' : 'Low'),
+        risk_score: +( ( (by_severity.High*9) + (by_severity.Moderate*5) + (by_severity.Low*2) ) / Math.max(1, drugIds.length) ).toFixed(1),
+        summary_text: interactions.length ? 'Potential interactions detected. Review detailed table and recommendations.' : 'No interactions detected.'
+      },
+      interactions,
+      statistics: {
+        by_severity,
+        history: [
+          {date: new Date(Date.now()-28*24*60*60*1000).toISOString().slice(0,10), risk_score: Math.round((Math.random()*4+3)*10)/10},
+          {date: new Date(Date.now()-14*24*60*60*1000).toISOString().slice(0,10), risk_score: Math.round((Math.random()*4+4)*10)/10},
+          {date: new Date().toISOString().slice(0,10), risk_score: Math.round(((by_severity.High*9)+(by_severity.Moderate*5)+(by_severity.Low*2))/Math.max(1,drugIds.length)*10)/10}
+        ]
+      }
+    };
+
+    // Simulate a network delay
+    await new Promise(r => setTimeout(r, 900 + Math.random()*700));
+    return mockResponse;
+  }
+
+  // -----------------------
+  // Main "Check Interaction" flow
+  // -----------------------
+  checkBtn.addEventListener('click', async () => {
+    if (selectedDrugs.length < 2) {
+      alert('Please add at least two medicines to check interactions.');
+      return;
+    }
+    // show loading skeletons
+    setLoading(true);
+    try {
+      const drugIds = selectedDrugs.map(d => d.id);
+      const resp = await fetchInteractions(drugIds);
+      renderResults(resp);
+      if (savedCheckbox.checked) saveCheck(resp);
+    } catch (e) {
+      console.error('Failed to fetch interactions', e);
+      alert('Failed to fetch interactions. Showing mock results.');
+    } finally {
+      setLoading(false);
+    }
+  });
+
+  function setLoading(isLoading){
+    // simple visual feedback: disable button and show skeletons
+    checkBtn.disabled = isLoading;
+    if (isLoading) {
+      summaryText.innerHTML = '<div class="skeleton" style="width:70%;height:16px"></div>';
+      resultsBody.innerHTML = '<tr><td colspan="5"><div class="skeleton" style="height:120px"></div></td></tr>';
+    }
+  }
+
+  // Save checks (localStorage)
+  function saveCheck(resp){
+    try{
+      const saved = JSON.parse(localStorage.getItem(LS_KEY) || '[]');
+      saved.unshift({id: 'c_' + Date.now(), query: resp.query, summary: resp.summary});
+      // keep last 6
+      localStorage.setItem(LS_KEY, JSON.stringify(saved.slice(0,6)));
+      renderSavedChecks();
+    } catch(e){ console.warn('saveCheck failed', e); }
+  }
+
+  function renderSavedChecks(){
+    savedChecksEl.innerHTML = '';
+    const saved = JSON.parse(localStorage.getItem(LS_KEY) || '[]');
+    if (!saved.length) { savedChecksEl.innerHTML = '<div class="muted text-xs">No saved checks.</div>'; return; }
+    saved.forEach(s => {
+      const btn = document.createElement('button');
+      btn.className = 'p-2 rounded-md bg-white border text-left';
+      btn.innerHTML = `<div class="font-medium">${escapeHtml(s.query.drugs.map(d => d.name).join(', '))}</div><div class="muted text-xs">Risk: ${escapeHtml(s.summary.risk_level)}</div>`;
+      btn.addEventListener('click', async () => {
+        // repopulate selected drugs and re-run using the original drug ids
+        selectedDrugs = s.query.drugs.map(d => ({id:d.id, name:d.name, dosage:d.dosage}));
+        renderChips();
+        setLoading(true);
+        const resp = await fetchInteractions(selectedDrugs.map(d=>d.id));
+        renderResults(resp);
+        setLoading(false);
+      });
+      savedChecksEl.appendChild(btn);
+    });
+  }
+  renderSavedChecks();
+
+  // -----------------------
+  // Render results: charts, summary, table, network
+  // -----------------------
+  function renderResults(data){
+    // Update summary
+    summaryText.textContent = data.summary.summary_text || '';
+    riskLevelText.textContent = data.summary.risk_level + ' risk';
+    riskScoreText.textContent = 'Score: ' + (data.summary.risk_score ?? '—');
+    generatedAt.textContent = new Date(data.query.timestamp || Date.now()).toLocaleString();
+
+    // badge color
+    const badge = document.getElementById('riskBadge');
+    if (data.summary.risk_level === 'High') {
+      badge.style.background = 'linear-gradient(90deg,#ff7b6b,var(--accent))';
+      badge.innerHTML = `<div class="badge-high">High</div>`;
+    } else if (data.summary.risk_level === 'Moderate') {
+      badge.style.background = 'linear-gradient(90deg,#F59E0B,#FBBF24)';
+      badge.innerHTML = `<div class="badge-med">Moderate</div>`;
+    } else {
+      badge.style.background = 'transparent';
+      badge.innerHTML = `<div class="badge-low">Low</div>`;
+    }
+
+    // Quick actions example
+    quickActions.innerHTML = '';
+    if (data.summary.risk_level === 'High') {
+      addQuickAct('Avoid combination', 'danger');
+      addQuickAct('Consult specialist', 'warning');
+      addQuickAct('Monitor for serotonin syndrome', 'info');
+    } else if (data.summary.risk_level === 'Moderate') {
+      addQuickAct('Dose adjust', 'warning');
+      addQuickAct('Monitor labs', 'info');
+    } else {
+      addQuickAct('Standard monitoring', 'success');
+    }
+
+    // Render charts
+    drawCharts(data.statistics);
+
+    // Render network
+    drawNetwork(data);
+
+    // Render table
+    renderTable(data.interactions);
+  }
+
+  function addQuickAct(text, tone){
+    const btn = document.createElement('div');
+    btn.className = 'pill';
+    btn.textContent = text;
+    quickActions.appendChild(btn);
+  }
+
+  // Charts: pie, bar, line
+  function drawCharts(stats){
+    const by = stats.by_severity || {High:0, Moderate:0, Low:0};
+    const pieCtx = document.getElementById('pieChart').getContext('2d');
+    const barCtx = document.getElementById('barChart').getContext('2d');
+    const lineCtx = document.getElementById('lineChart').getContext('2d');
+
+    // Destroy if existing to avoid duplicates
+    if (pieChart) pieChart.destroy();
+    if (barChart) barChart.destroy();
+    if (lineChart) lineChart.destroy();
+
+    pieChart = new Chart(pieCtx, {
+      type: 'doughnut',
+      data: {
+        labels: ['High','Moderate','Low'],
+        datasets: [{ data: [by.High||0, by.Moderate||0, by.Low||0], backgroundColor: ['#ef4444','#F59E0B','#10B981'] }]
+      },
+      options: { plugins:{legend:{position:'bottom'}} }
+    });
+
+    barChart = new Chart(barCtx, {
+      type: 'bar',
+      data: {
+        labels: ['High','Moderate','Low'],
+        datasets: [{ label:'Count', data: [by.High||0, by.Moderate||0, by.Low||0] }]
+      },
+      options: { scales:{ y:{ beginAtZero:true, ticks:{precision:0} } }, plugins:{legend:{display:false}} }
+    });
+
+    // History: stats.history
+    const history = stats.history || [];
+    const labels = history.map(h => h.date);
+    const scores = history.map(h => h.risk_score);
+    lineChart = new Chart(lineCtx, {
+      type: 'line',
+      data: { labels, datasets: [{ label:'Risk score', data: scores, tension:0.35, fill:true }] },
+      options: { scales:{ y:{ beginAtZero:true } }, plugins:{legend:{display:false}} }
+    });
+  }
+
+  // Network: nodes = drugs, edges = interactions
+  function drawNetwork(data){
+    const container = document.getElementById('network');
+    const nodes = [];
+    const edges = [];
+    const drugMap = {};
+    // create nodes from data.query.drugs
+    (data.query.drugs || []).forEach((d, idx) => {
+      nodes.push({id: d.id, label: d.name, title: `<strong>${escapeHtml(d.name)}</strong><div class="muted">${escapeHtml(d.dosage || '')}</div>`, value: 1 + Math.random()*3});
+      drugMap[d.id] = d;
+    });
+    // edges from interactions
+    data.interactions.forEach(it => {
+      // create edges between each pair in it.drugs
+      for (let i=0;i<it.drugs.length;i++){
+        for (let j=i+1;j<it.drugs.length;j++){
+          const a = it.drugs[i], b = it.drugs[j];
+          const color = it.severity === 'High' ? '#ef4444' : (it.severity === 'Moderate' ? '#F59E0B' : '#10B981');
+          edges.push({from:a, to:b, width: 1 + Math.max(1, Math.round(it.severity_score/3)), color});
+        }
+      }
+    });
+
+    networkData = { nodes: new vis.DataSet(nodes), edges: new vis.DataSet(edges) };
+
+    const options = {
+      nodes: { shape:'dot', size:18, font:{size:14}, borderWidth:2 },
+      edges: { smooth:true, color:{inherit:false}, arrows: { to: { enabled:false } } },
+      interaction: { hover:true, multiselect:false, tooltipDelay: 100 },
+      physics: { stabilization:true, barnesHut: { gravitationalConstant: -8000 } }
+    };
+
+    if (network) {
+      network.setData(networkData);
+    } else {
+      network = new vis.Network(container, networkData, options);
+      network.on('click', function(params){
+        if (params.nodes && params.nodes.length) {
+          const nodeId = params.nodes[0];
+          highlightTableRow(nodeId);
+        }
+      });
+      // hover tooltip: vis-network uses node.title (HTML) by default if enabled
+    }
+  }
+
+  // Helper: highlight table row(s) containing the node drug id
+  function highlightTableRow(drugId){
+    document.querySelectorAll('#resultsBody tr').forEach(tr => tr.classList.remove('expanded-row'));
+    document.querySelectorAll(`#resultsBody tr[data-drugs*="${drugId}"]`).forEach(tr => {
+      tr.classList.add('expanded-row');
+      tr.scrollIntoView({behavior:'smooth', block:'center'});
+    });
+  }
+
+  // Render table rows
+  function renderTable(interactions){
+    if (!interactions || interactions.length === 0) {
+      resultsBody.innerHTML = '<tr><td colspan="5" class="muted p-6">No interactions found for the selected combination.</td></tr>';
+      return;
+    }
+    resultsBody.innerHTML = '';
+    interactions.forEach(it => {
+      const tr = document.createElement('tr');
+      tr.className = 'expandable';
+      tr.dataset.id = it.id;
+      tr.dataset.drugs = it.drugs.join(',');
+      tr.innerHTML = `<td><div class="font-medium">${escapeHtml(it.drugs.join(' + '))}</div></td>
+        <td>${renderSeverity(it.severity)}</td>
+        <td>${escapeHtml(it.evidence || '')}</td>
+        <td>${escapeHtml(it.recommendation || '')}</td>
+        <td>${renderRefs(it.references || [])}</td>`;
+      resultsBody.appendChild(tr);
+
+      // Expanded row
+      const exp = document.createElement('tr');
+      exp.className = 'hidden';
+      exp.innerHTML = `<td colspan="5" style="padding:14px 12px;background:linear-gradient(90deg, rgba(224,122,58,0.02), rgba(224,122,58,0.01));">
+        <div class="text-sm muted"><strong>Mechanism:</strong> ${escapeHtml(it.mechanism || '—')}</div>
+        <div class="text-sm mt-2"><strong>Severity score:</strong> ${escapeHtml(String(it.severity_score || '—'))}</div>
+      </td>`;
+      resultsBody.appendChild(exp);
+
+      tr.addEventListener('click', () => {
+        const isHidden = exp.classList.contains('hidden');
+        exp.classList.toggle('hidden', !isHidden);
+        tr.classList.toggle('expanded-row', isHidden);
+      });
+    });
+  }
+
+  function renderSeverity(s){
+    if (!s) return '';
+    if (s === 'High') return `<span class="badge-high">${escapeHtml(s)}</span>`;
+    if (s === 'Moderate') return `<span class="badge-med">${escapeHtml(s)}</span>`;
+    return `<span class="badge-low">${escapeHtml(s)}</span>`;
+  }
+
+  function renderRefs(refs){
+    if (!refs || !refs.length) return '—';
+    return refs.map(r => `<a href="${escapeHtml(r.url||'#')}" target="_blank" rel="noopener" class="text-[var(--accent)] text-sm">${escapeHtml(r.title || r.doi || r.url)}</a>`).join(', ');
+  }
+
+  // -----------------------
+  // Export CSV
+  // -----------------------
+  exportCSVBtn.addEventListener('click', () => {
+    const rows = [];
+    const header = ['id','drugs','severity','severity_score','mechanism','evidence','recommendation','references'];
+    rows.push(header.join(','));
+    const trs = Array.from(document.querySelectorAll('#resultsBody tr[data-id]'));
+    trs.forEach(tr => {
+      const id = tr.dataset.id;
+      // find corresponding expanded row for mechanism
+      const idx = Array.from(tr.parentNode.children).indexOf(tr);
+      const exp = tr.parentNode.children[idx+1];
+      const mechanism = exp ? (exp.textContent || '').trim().replace(/\n+/g,' ').replace(/,/g,';') : '';
+      const cells = tr.querySelectorAll('td');
+      const drugs = cells[0].innerText.trim().replace(/,/g,';');
+      const severity = cells[1].innerText.trim();
+      const evidence = cells[2].innerText.trim();
+      const recommendation = cells[3].innerText.trim().replace(/,/g,';');
+      // references: join anchor texts
+      const refs = Array.from(cells[4].querySelectorAll('a')).map(a => a.href).join(';');
+      const severity_score = (severity === 'High' ? '9' : (severity === 'Moderate' ? '5' : '2'));
+      const row = [id, `"${drugs}"`, severity, severity_score, `"${mechanism.replace(/"/g,'""')}"`, evidence, `"${recommendation.replace(/"/g,'""')}"`, `"${refs}"`];
+      rows.push(row.join(','));
+    });
+    if (rows.length === 1) { alert('No table data to export.'); return; }
+    const blob = new Blob([rows.join('\n')], {type:'text/csv;charset=utf-8;'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'safRx_interactions.csv'; a.click();
+    URL.revokeObjectURL(url);
+  });
+
+  // -----------------------
+  // Export PDF (using html2canvas + jsPDF)
+  // -----------------------
+  exportPDFBtn.addEventListener('click', async () => {
+    // Build a printable clone of the report in #pdfCapture
+    const capture = document.getElementById('pdfCapture');
+    capture.innerHTML = '';
+    const header = document.createElement('div');
+    header.innerHTML = `<div style="display:flex;align-items:center;gap:10px;"><div style="font-weight:800;color:var(--accent);font-size:22px;">SafeRx</div><div style="color:#6b7280">Drug Interaction Report</div></div><hr style="margin:10px 0 14px;">`;
+    capture.appendChild(header);
+
+    // Summary snapshot
+    const summarySnap = document.createElement('div');
+    summarySnap.innerHTML = `<div style="font-weight:700;margin-bottom:6px">Summary</div><div style="margin-bottom:8px">${escapeHtml(summaryText.textContent || '')}</div>`;
+    capture.appendChild(summarySnap);
+
+    // Charts: capture each chart as canvas image
+    // We'll clone the canvases and draw to canvas for export
+    const charts = ['pieChart','barChart','lineChart'];
+    for (const id of charts){
+      const c = document.getElementById(id);
+      if (!c) continue;
+      // clone into capture
+      const img = new Image();
+      img.src = c.toDataURL('image/png');
+      img.style.width = '480px';
+      img.style.display = 'block';
+      img.style.marginBottom = '10px';
+      capture.appendChild(img);
+    }
+
+    // Table snapshot (simple)
+    const tableClone = document.createElement('div');
+    tableClone.innerHTML = '<div style="font-weight:700;margin:12px 0 6px">Detailed interactions</div>';
+    const table = document.getElementById('resultsTable').cloneNode(true);
+    table.style.width = '100%';
+    table.querySelectorAll('th').forEach(th => { th.style.background = '#f8fafc'; th.style.padding = '6px';});
+    table.querySelectorAll('td').forEach(td => { td.style.padding = '6px'; });
+    tableClone.appendChild(table);
+    capture.appendChild(tableClone);
+
+    // Render capture to pdf
+    try {
+      const canvas = await html2canvas(capture, {scale: 1.6, useCORS:true, allowTaint:true});
+      const imgData = canvas.toDataURL('image/png');
+      const { jsPDF } = window.jspdf;
+      const pdf = new jsPDF({ unit: 'pt', format: 'a4' });
+      const imgProps = pdf.getImageProperties(imgData);
+      const pdfWidth = pdf.internal.pageSize.getWidth();
+      const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
+      pdf.addImage(imgData, 'PNG', 20, 20, pdfWidth - 40, pdfHeight);
+      pdf.save('SafeRx_report.pdf');
+    } catch (e) {
+      console.error('PDF export failed', e);
+      alert('PDF generation failed in this browser. Try a different browser or disable extensions that block scripts.');
+    } finally {
+      capture.innerHTML = '';
+    }
+  });
+
+  // -----------------------
+  // Utility: escape HTML
+  // -----------------------
+  function escapeHtml(s){
+    if (!s && s !== 0) return '';
+    return String(s).replace(/[&<>"']/g, function(m){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]); });
+  }
+
+  // -----------------------
+  // Theme toggle (light/dark minimal)
+  // -----------------------
+  const themeToggle = document.getElementById('themeToggle');
+  let dark = false;
+  themeToggle.addEventListener('click', () => {
+    dark = !dark;
+    if (dark) {
+      document.documentElement.style.setProperty('--card','#0b1220');
+      document.documentElement.style.setProperty('--bg','#071029');
+      document.documentElement.style.setProperty('--muted','#9CA3AF');
+      document.documentElement.style.setProperty('--slate-900','#ecfeff');
+      document.body.classList.add('dark');
+      themeToggle.setAttribute('aria-pressed','true');
+    } else {
+      document.documentElement.style.setProperty('--card','#ffffff');
+      document.documentElement.style.setProperty('--bg','#F8FAFC');
+      document.documentElement.style.setProperty('--muted','#6B7280');
+      document.documentElement.style.setProperty('--slate-900','#0f1724');
+      document.body.classList.remove('dark');
+      themeToggle.setAttribute('aria-pressed','false');
+    }
+  });
+
+  // -----------------------
+  // Small helper: render saved checks on load (done earlier)
+  // -----------------------
+
+  // -----------------------
+  // Initialize small defaults (demo)
+  // -----------------------
+  (function initDemo(){
+    // Preload a couple of items into suggestions when focus
+    drugInput.addEventListener('focus', () => {
+      if (!drugInput.value) renderSuggestions(DRUG_CATALOG.slice(0,6));
+    });
+    drugInput.addEventListener('blur', () => {
+      setTimeout(()=> suggestionsEl.classList.add('hidden'), 180);
+    });
+
+    // init charts with empty data
+    drawCharts({by_severity:{High:0,Moderate:0,Low:0}, history:[]});
+  })();
+
+  // -----------------------
+  // Small utility: run a sample check automatically if you like (disabled)
+  // -----------------------
+  // Example:
+  // selectedDrugs = [{id:'paroxetine',name:'Paroxetine',dosage:'20 mg'},{id:'tramadol',name:'Tramadol',dosage:'50 mg'}];
+  // renderChips();
+  // checkBtn.click();
+
+  // Prevent accidental console errors in older browsers by feature-checking
+  if (!window.fetch || !window.Promise) {
+    alert('Your browser is out-of-date. Please use a modern browser (Chrome, Firefox, Edge).');
+  }
+
+  // run accessibility icon initialization
+  feather && feather.replace();
+
+  </script>
+</body>
+</html>

@@ -1,0 +1,42 @@
+<!-- About Page (Enhanced with Drug Images) -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>About - SafeRx</title>
+  <style>
+body{animation: bgFade 10s infinite alternate;}
+@keyframes bgFade{0%{background:#eef3f4;}100%{background:#d7e9f7;}}
+    body{font-family:Arial, sans-serif;background:#eef3f4;margin:0;padding:20px;animation:bgFade 10s infinite alternate;}
+    .container{max-width:900px;margin:auto;background:#fff;padding:30px;border-radius:15px;box-shadow:0 4px 15px rgba(0,0,0,0.1);}    
+    h1{color:#0b3e45;margin-bottom:15px;text-align:center;}    
+    p{line-height:1.6;color:#333;}    
+    .drug-gallery{margin-top:20px;display:flex;gap:15px;flex-wrap:wrap;justify-content:center;}    
+    .drug-img{width:160px;height:110px;border-radius:12px;object-fit:cover;box-shadow:0 3px 10px rgba(0,0,0,0.12);} 
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>About SafeRx</h1>
+    <p>
+      SafeRx is an intelligent patient safety and medication verification system designed to significantly
+      reduce medical errors and improve healthcare accuracy using smart automation.
+    </p>
+    <p>
+      It integrates patient data, medicine verification, vitals analysis, drug interaction detection,
+      and medical risk prediction using a unified dashboard.
+    </p>
+
+    <h2 style="color:#0b3e45;margin-top:25px;">Drug Categories We Analyze</h2>
+
+    <div class="drug-gallery">
+      <img src="https://images.pexels.com/photos/3683078/pexels-photo-3683078.jpeg" class="drug-img">
+      <img src="https://images.pexels.com/photos/360622/pexels-photo-360622.jpeg" class="drug-img">
+      <img src="https://images.pexels.com/photos/4021772/pexels-photo-4021772.jpeg" class="drug-img">
+      <img src="https://images.pexels.com/photos/3861439/pexels-photo-3861439.jpeg" class="drug-img">
+    </div>
+
+  </div>
+</body>
+</html>
