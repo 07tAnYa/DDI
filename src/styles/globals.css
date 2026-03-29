@@ -1,0 +1,155 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: light;
+    --radius: 0.625rem;
+    --background: #ffffff;
+    --foreground: #172033;
+    --card: #ffffff;
+    --card-foreground: #172033;
+    --popover: #ffffff;
+    --popover-foreground: #172033;
+    --primary: #4a5baa;
+    --primary-foreground: #ffffff;
+    --secondary: #f7f6fe;
+    --secondary-foreground: #1f1f1f;
+    --muted: #f5f7fc;
+    --muted-foreground: #6c7894;
+    --accent: #f6f6fa;
+    --accent-foreground: #1e1e1e;
+    --destructive: #dc4d4d;
+    --border: #e8ebf3;
+    --input: #e8ebf3;
+    --ring: #c7cddd;
+    --chart-1: #6d7de0;
+    --chart-2: #51b8ba;
+    --chart-3: #3d5a8d;
+    --chart-4: #f1c76b;
+    --chart-5: #f29d5e;
+    --sidebar: #fbfbfe;
+    --sidebar-foreground: #172033;
+    --sidebar-primary: #4a5baa;
+    --sidebar-primary-foreground: #ffffff;
+    --sidebar-accent: #f2f4fb;
+    --sidebar-accent-foreground: #1f1f1f;
+    --sidebar-border: #e6ebf5;
+    --sidebar-ring: #c7cddd;
+    --font-system: -apple-system, BlinkMacSystemFont, "Segoe UI", Ubuntu,
+      Cantarell, Roboto, "Helvetica Neue", Arial, sans-serif, "Apple Color Emoji",
+      "Segoe UI Emoji", "Segoe UI Symbol";
+
+    --page-bg: var(--background);
+    --panel-bg: var(--card);
+    --panel-border: var(--border);
+    --text-main: var(--foreground);
+    --text-muted: var(--muted-foreground);
+    --surface-soft: var(--accent);
+    --surface-muted: var(--secondary);
+    --page-image:
+      radial-gradient(circle at top left, rgba(74, 91, 170, 0.09), transparent 28%),
+      radial-gradient(circle at bottom right, rgba(109, 125, 224, 0.08), transparent 22%),
+      linear-gradient(180deg, rgba(255, 255, 255, 0.72), rgba(247, 249, 253, 0.96));
+  }
+
+  .dark {
+    color-scheme: dark;
+    --background: #111827;
+    --foreground: #f5f7ff;
+    --card: #182132;
+    --card-foreground: #f5f7ff;
+    --popover: #182132;
+    --popover-foreground: #f5f7ff;
+    --primary: #6d7de0;
+    --primary-foreground: #ffffff;
+    --secondary: #1f293b;
+    --secondary-foreground: #f5f7ff;
+    --muted: #1f293b;
+    --muted-foreground: #9aa6c7;
+    --accent: #212c42;
+    --accent-foreground: #f5f7ff;
+    --destructive: #c85757;
+    --border: rgba(255, 255, 255, 0.1);
+    --input: rgba(255, 255, 255, 0.14);
+    --ring: #98a2be;
+    --chart-1: #6d7de0;
+    --chart-2: #5fc5c6;
+    --chart-3: #8aa2ff;
+    --chart-4: #f0c76f;
+    --chart-5: #ed8d73;
+    --sidebar: #141d2d;
+    --sidebar-foreground: #f5f7ff;
+    --sidebar-primary: #6d7de0;
+    --sidebar-primary-foreground: #ffffff;
+    --sidebar-accent: #1f293b;
+    --sidebar-accent-foreground: #f5f7ff;
+    --sidebar-border: rgba(255, 255, 255, 0.1);
+    --sidebar-ring: #98a2be;
+    --font-system: -apple-system, BlinkMacSystemFont, "Segoe UI", Ubuntu,
+      Cantarell, Roboto, "Helvetica Neue", Arial, sans-serif, "Apple Color Emoji",
+      "Segoe UI Emoji", "Segoe UI Symbol";
+
+    --page-bg: var(--background);
+    --panel-bg: var(--card);
+    --panel-border: var(--border);
+    --text-main: var(--foreground);
+    --text-muted: var(--muted-foreground);
+    --surface-soft: var(--accent);
+    --surface-muted: var(--secondary);
+    --page-image:
+      radial-gradient(circle at top left, rgba(109, 125, 224, 0.1), transparent 24%),
+      radial-gradient(circle at bottom right, rgba(59, 90, 141, 0.14), transparent 18%),
+      linear-gradient(180deg, rgba(17, 24, 39, 0.98), rgba(15, 23, 43, 1));
+  }
+
+  * {
+    border-color: var(--border);
+  }
+
+  html {
+    @apply scroll-smooth;
+  }
+
+  body {
+    @apply min-h-screen antialiased transition-colors duration-300;
+    background-color: var(--background);
+    color: var(--foreground);
+    background-image: var(--page-image);
+    font-family: var(--font-system);
+  }
+
+  button,
+  input,
+  select,
+  textarea {
+    @apply focus:outline-none;
+  }
+
+  button:focus-visible,
+  input:focus-visible,
+  select:focus-visible,
+  textarea:focus-visible {
+    box-shadow: 0 0 0 3px rgba(74, 91, 170, 0.14);
+  }
+}
+
+@layer components {
+  .panel {
+    @apply rounded-3xl border shadow-soft;
+    background-color: var(--panel-bg);
+    border-color: var(--panel-border);
+    box-shadow:
+      0 18px 40px rgba(23, 32, 51, 0.06),
+      0 2px 10px rgba(74, 91, 170, 0.03);
+  }
+
+  .panel-title {
+    @apply text-lg font-semibold tracking-tight text-[var(--text-main)];
+  }
+
+  .muted {
+    @apply text-sm text-[var(--text-muted)];
+  }
+}
